@@ -1,123 +1,112 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
-from datetime import date
+import sqlite3
+from datetime import datetime
+from io import BytesIO
 
 st.set_page_config(page_title="FAST", layout="wide")
 
-# ========== CONEXÕES ==========
-conn = sqlite3.connect("produtos.db", check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS produtos (
-    codigo TEXT PRIMARY KEY,
-    descricao TEXT
-)
-""")
-conn.commit()
-
-conn_padaria = sqlite3.connect("padaria.db", check_same_thread=False)
-cursor_padaria = conn_padaria.cursor()
-cursor_padaria.execute("""
-CREATE TABLE IF NOT EXISTS padaria (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    data TEXT,
-    codigo TEXT,
-    descricao TEXT,
-    quantidade REAL,
-    unidade TEXT,
-    motivo TEXT
-)
-""")
-conn_padaria.commit()
+# ========== TÍTULO ==========
+st.markdown("<h1 style='text-align: center; color: red;'>FAST - Controle Padaria e Transformações</h1>", unsafe_allow_html=True)
 
 # ========== FUNÇÕES ==========
-def buscar_descricao(codigo):
-    cursor.execute("SELECT descricao FROM produtos WHERE codigo = ?", (codigo,))
-    resultado = cursor.fetchone()
-    return resultado[0] if resultado else ""
+def init_db():
+    with sqlite3.connect("produtos.db") as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS produtos (codigo TEXT PRIMARY KEY, descricao TEXT)""")
+    with sqlite3.connect("lancamentos.db") as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS lancamentos_padaria (data TEXT, codigo TEXT, descricao TEXT, quantidade TEXT, motivo TEXT)""")
+    with sqlite3.connect("transformacoes.db") as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS transformacoes_carne (data TEXT, codigo_origem TEXT, descricao TEXT, quantidade TEXT, codigo_destino TEXT)""")
 
 def cadastrar_produto(codigo, descricao):
-    try:
-        cursor.execute("INSERT OR IGNORE INTO produtos (codigo, descricao) VALUES (?, ?)", (codigo, descricao))
-        conn.commit()
-    except sqlite3.OperationalError as e:
-        st.error(f"Erro ao cadastrar produto: {e}")
+    with sqlite3.connect("produtos.db") as conn:
+        conn.execute("INSERT OR IGNORE INTO produtos (codigo, descricao) VALUES (?, ?)", (codigo, descricao))
 
-def salvar_lancamento(data, codigo, descricao, quantidade, unidade, motivo):
-    try:
-        cursor_padaria.execute("""
-            INSERT INTO padaria (data, codigo, descricao, quantidade, unidade, motivo)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (data, codigo, descricao, quantidade, unidade, motivo))
-        conn_padaria.commit()
-    except sqlite3.OperationalError as e:
-        st.error(f"Erro ao salvar lançamento: {e}")
+def buscar_descricao(codigo):
+    with sqlite3.connect("produtos.db") as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT descricao FROM produtos WHERE codigo = ?", (codigo,))
+        result = cur.fetchone()
+        return result[0] if result else ""
 
-def excluir_lancamento_padaria(id_lanc):
-    cursor_padaria.execute("DELETE FROM padaria WHERE id = ?", (id_lanc,))
-    conn_padaria.commit()
+def salvar_lancamento_padaria(data, codigo, descricao, quantidade, motivo):
+    with sqlite3.connect("lancamentos.db") as conn:
+        conn.execute("INSERT INTO lancamentos_padaria VALUES (?, ?, ?, ?, ?)", (data, codigo, descricao, quantidade, motivo))
 
-# ========== LAYOUT ==========
-st.image("logo.png", width=120)
-st.title("📦 FAST - Lançamentos e Transformações")
-aba = st.sidebar.radio("Escolha a área:", ["Lançamentos da padaria", "Transformações de carne bovina"])
+def salvar_transformacao_carne(data, codigo_origem, descricao, quantidade, codigo_destino):
+    with sqlite3.connect("transformacoes.db") as conn:
+        conn.execute("INSERT INTO transformacoes_carne VALUES (?, ?, ?, ?, ?)", (data, codigo_origem, descricao, quantidade, codigo_destino))
 
-# ========== ABA PADARIA ==========
-if aba == "Lançamentos da padaria":
-    st.header("🥖 Lançamentos da Padaria")
-    with st.form("form_padaria"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            data = st.date_input("Data", value=date.today())
-        with col2:
-            codigo = st.text_input("Código do produto")
-        with col3:
-            if codigo:
-                descricao = buscar_descricao(codigo)
-            else:
-                descricao = ""
-            descricao = st.text_input("Descrição", value=descricao)
+def obter_lancamentos_padaria():
+    with sqlite3.connect("lancamentos.db") as conn:
+        df = pd.read_sql_query("SELECT * FROM lancamentos_padaria", conn)
+    return df
 
-        col4, col5, col6 = st.columns(3)
-        with col4:
-            quantidade = st.number_input("Quantidade", min_value=0.01, step=0.01)
-        with col5:
-            unidade = st.selectbox("Unidade", ["kg", "un"])
-        with col6:
-            motivo = st.selectbox("Motivo", ["Avaria", "Doação", "Refeitório", "Inventário"])
+def obter_transformacoes_carne():
+    with sqlite3.connect("transformacoes.db") as conn:
+        df = pd.read_sql_query("SELECT * FROM transformacoes_carne", conn)
+    return df
 
-        submitted = st.form_submit_button("Salvar lançamento")
-        if submitted and codigo and descricao:
+# ========== INTERFACE ==========
+init_db()
+aba = st.sidebar.selectbox("Escolha uma aba", ["Lançamentos Padaria", "Transformações Carne"])
+
+if aba == "Lançamentos Padaria":
+    st.subheader("Lançamentos da Padaria")
+    data = st.date_input("Data", value=datetime.today())
+    codigo = st.text_input("Código do produto")
+    descricao = buscar_descricao(codigo)
+    st.text_input("Descrição", value=descricao, disabled=True)
+    quantidade = st.text_input("Quantidade (kg ou un)")
+    motivo = st.selectbox("Motivo", ["Avaria", "Doação", "Refeitório", "Inventário"])
+    if st.button("Salvar Lançamento"):
+        if codigo and quantidade:
             cadastrar_produto(codigo, descricao)
-            salvar_lancamento(str(data), codigo, descricao, quantidade, unidade, motivo)
-            st.success("Lançamento salvo com sucesso!")
+            salvar_lancamento_padaria(str(data), codigo, descricao, quantidade, motivo)
+            st.success("Lançamento salvo com sucesso.")
+        else:
+            st.warning("Preencha todos os campos obrigatórios.")
 
-    st.subheader("📄 Registros")
-    df_padaria = pd.read_sql_query("SELECT * FROM padaria ORDER BY data DESC", conn_padaria)
-    st.dataframe(df_padaria, use_container_width=True)
+    st.markdown("---")
+    st.subheader("Registros Salvos")
+    df = obter_lancamentos_padaria()
+    st.dataframe(df)
 
-    # Botão para excluir
-    if not df_padaria.empty:
-        id_excluir = st.selectbox("Excluir lançamento (selecione o ID):", options=df_padaria["id"])
-        if st.button("Excluir"):
-            excluir_lancamento_padaria(id_excluir)
-            st.success("Registro excluído com sucesso!")
-            st.experimental_rerun()
+    # Exportar Excel com 2 abas
+    if not df.empty:
+        if st.button("📥 Exportar Excel"):
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, sheet_name='Detalhado', index=False)
+                df.groupby("motivo")["quantidade"].count().reset_index(name="Total").to_excel(writer, sheet_name='Total por Motivo', index=False)
+            st.download_button("Clique para baixar", data=output.getvalue(), file_name="lancamentos_padaria.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # ======= EXPORTAÇÃO COM TOTAL POR PRODUTO =======
-    if not df_padaria.empty:
-        df_total = df_padaria.groupby(['codigo', 'descricao'])['quantidade'].sum().reset_index()
-        df_total = df_total.rename(columns={'quantidade': 'total_quantidade'})
+elif aba == "Transformações Carne":
+    st.subheader("Transformações de Carne Bovina")
+    data = st.date_input("Data", value=datetime.today(), key="carne")
+    codigo_origem = st.text_input("Código do produto de origem")
+    descricao = buscar_descricao(codigo_origem)
+    st.text_input("Descrição", value=descricao, disabled=True, key="desc2")
+    quantidade = st.text_input("Quantidade (kg)", key="qtd2")
+    codigo_destino = st.text_input("Código do produto de destino")
+    if st.button("Salvar Transformação"):
+        if codigo_origem and quantidade and codigo_destino:
+            cadastrar_produto(codigo_origem, descricao)
+            salvar_transformacao_carne(str(data), codigo_origem, descricao, quantidade, codigo_destino)
+            st.success("Transformação salva com sucesso.")
+        else:
+            st.warning("Preencha todos os campos obrigatórios.")
 
-        with pd.ExcelWriter("lancamentos_padaria.xlsx", engine="xlsxwriter") as writer:
-            df_padaria.to_excel(writer, index=False, sheet_name="Detalhado")
-            df_total.to_excel(writer, index=False, sheet_name="Total por Produto")
+    st.markdown("---")
+    st.subheader("Registros Salvos")
+    df = obter_transformacoes_carne()
+    st.dataframe(df)
 
-        with open("lancamentos_padaria.xlsx", "rb") as f:
-            st.download_button("📥 Baixar Excel (com Totais)", f, file_name="lancamentos_padaria.xlsx")
-
-# ========== ABA TRANSFORMAÇÕES ==========
-elif aba == "Transformações de carne bovina":
-    st.header("🥩 Transformações de Carne Bovina")
-    # Essa parte segue o mesmo modelo da padaria, se quiser posso implementar também a parte do total por código destino aqui
+    # Exportar Excel com 2 abas
+    if not df.empty:
+        if st.button("📥 Exportar Excel"):
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, sheet_name='Detalhado', index=False)
+                df.groupby("codigo_destino")["quantidade"].count().reset_index(name="Total").to_excel(writer, sheet_name='Total por Código Destino', index=False)
+            st.download_button("Clique para baixar", data=output.getvalue(), file_name="transformacoes_carne.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

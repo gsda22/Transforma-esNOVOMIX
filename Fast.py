@@ -1,134 +1,202 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime
-from io import BytesIO
+from datetime import date
 
-st.set_page_config(page_title="FAST", layout="wide")
+# ========== CONEXÃO COM O BANCO DE DADOS ==========
+conn_produtos = sqlite3.connect('produtos.db', check_same_thread=False)
+cursor_produtos = conn_produtos.cursor()
 
-# ========== TÍTULO ==========
-st.markdown("<h1 style='text-align: center; color: red;'>FAST - Controle Padaria e Transformações</h1>", unsafe_allow_html=True)
+conn_usuarios = sqlite3.connect('usuarios.db', check_same_thread=False)
+cursor_usuarios = conn_usuarios.cursor()
+cursor_usuarios.execute("""
+CREATE TABLE IF NOT EXISTS usuarios (
+    usuario TEXT PRIMARY KEY,
+    senha TEXT NOT NULL
+)
+""")
+conn_usuarios.commit()
 
-# ========== FUNÇÕES ==========
-def init_db():
-    with sqlite3.connect("produtos.db") as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS produtos (codigo TEXT PRIMARY KEY, descricao TEXT)""")
-    with sqlite3.connect("lancamentos.db") as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS lancamentos_padaria (data TEXT, codigo TEXT, descricao TEXT, quantidade TEXT, motivo TEXT)""")
-    with sqlite3.connect("transformacoes.db") as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS transformacoes_carne (data TEXT, codigo_origem TEXT, descricao TEXT, quantidade TEXT, codigo_destino TEXT)""")
+# INSERIR USUÁRIO ADMIN PADRÃO SE NÃO EXISTIR
+cursor_usuarios.execute("SELECT * FROM usuarios WHERE usuario='admin'")
+if cursor_usuarios.fetchone() is None:
+    cursor_usuarios.execute("INSERT INTO usuarios (usuario, senha) VALUES (?, ?)", ("admin", "79318520"))
+    conn_usuarios.commit()
 
-def cadastrar_produto(codigo, descricao):
-    with sqlite3.connect("produtos.db") as conn:
-        conn.execute("INSERT OR IGNORE INTO produtos (codigo, descricao) VALUES (?, ?)", (codigo, descricao))
+# Tabela para registros de validade
+cursor_produtos.execute("""
+CREATE TABLE IF NOT EXISTS registros_validade (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigo TEXT,
+    descricao TEXT,
+    validade TEXT,
+    preco_atual TEXT,
+    preco_queima TEXT,
+    custo_atual TEXT,
+    custo_anterior TEXT,
+    quantidade TEXT,
+    data_registro TEXT,
+    lote TEXT
+)
+""")
+conn_produtos.commit()
 
-def buscar_descricao(codigo):
-    with sqlite3.connect("produtos.db") as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT descricao FROM produtos WHERE codigo = ?", (codigo,))
-        result = cur.fetchone()
-        return result[0] if result else ""
+# ========== VARIÁVEIS DE SESSÃO ==========
+if "logado" not in st.session_state:
+    st.session_state.logado = False
+if "usuario" not in st.session_state:
+    st.session_state.usuario = ""
+if "lote_atual" not in st.session_state:
+    # Gera nome automático do próximo lote
+    cursor_produtos.execute("SELECT DISTINCT lote FROM registros_validade WHERE lote LIKE 'TPC_%'")
+    lotes_existentes = cursor_produtos.fetchall()
+    numeros = [int(l[0].split('_')[1]) for l in lotes_existentes if l[0].split('_')[1].isdigit()]
+    proximo_numero = max(numeros, default=0) + 1
+    st.session_state.lote_atual = f"TPC_{proximo_numero:02d}"
+    st.session_state.lote_fechado = False
+if "lote_fechado" not in st.session_state:
+    st.session_state.lote_fechado = False
 
-def salvar_lancamento_padaria(data, codigo, descricao, quantidade, motivo):
-    with sqlite3.connect("lancamentos.db") as conn:
-        conn.execute("INSERT INTO lancamentos_padaria VALUES (?, ?, ?, ?, ?)", (data, codigo, descricao, quantidade, motivo))
-
-def salvar_transformacao_carne(data, codigo_origem, descricao, quantidade, codigo_destino):
-    with sqlite3.connect("transformacoes.db") as conn:
-        conn.execute("INSERT INTO transformacoes_carne VALUES (?, ?, ?, ?, ?)", (data, codigo_origem, descricao, quantidade, codigo_destino))
-
-def obter_lancamentos_padaria():
-    with sqlite3.connect("lancamentos.db") as conn:
-        df = pd.read_sql_query("SELECT * FROM lancamentos_padaria", conn)
-    return df
-
-def obter_transformacoes_carne():
-    with sqlite3.connect("transformacoes.db") as conn:
-        df = pd.read_sql_query("SELECT * FROM transformacoes_carne", conn)
-    return df
-
-# ========== INTERFACE ==========
-init_db()
-aba = st.sidebar.selectbox("Escolha uma aba", ["Lançamentos Padaria", "Transformações Carne"])
-
-if aba == "Lançamentos Padaria":
-    st.subheader("Lançamentos da Padaria")
-    data = st.date_input("Data", value=datetime.today())
-    codigo = st.text_input("Código do produto")
-    descricao = buscar_descricao(codigo)
-    st.text_input("Descrição", value=descricao, disabled=True)
-
-    # CAMPO QUANTIDADE COM TRATAMENTO
-    quantidade_raw = st.text_input("Quantidade (kg ou un)")
-    quantidade = ''.join([c for c in quantidade_raw if c.isdigit() or c == '.' or c == ',']).replace(',', '.')
-
-    motivo = st.selectbox("Motivo", ["Avaria", "Doação", "Refeitório", "Inventário"])
-
-    if st.button("Salvar Lançamento"):
-        if codigo and quantidade:
-            cadastrar_produto(codigo, descricao)
-            salvar_lancamento_padaria(str(data), codigo, descricao, quantidade, motivo)
-            st.success("Lançamento salvo com sucesso.")
+# ========== LOGIN ==========
+def login():
+    st.title("Login")
+    usuario = st.text_input("Usuário")
+    senha = st.text_input("Senha", type="password")
+    if st.button("Entrar"):
+        cursor_usuarios.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (usuario, senha))
+        if cursor_usuarios.fetchone():
+            st.session_state.logado = True
+            st.session_state.usuario = usuario
+            st.experimental_rerun()
         else:
-            st.warning("Preencha todos os campos obrigatórios.")
+            st.error("Usuário ou senha incorretos.")
 
-    st.markdown("---")
-    st.subheader("Registros Salvos")
-    df = obter_lancamentos_padaria()
-    st.dataframe(df)
+# ========== CADASTRO DE USUÁRIO (apenas admin) ==========
+def cadastrar_usuario():
+    st.subheader("Cadastro de Novo Usuário (Admin apenas)")
+    nova_senha_admin = st.text_input("Senha do Administrador", type="password", key="senha_admin")
+    if nova_senha_admin == "79318520":
+        novo_usuario = st.text_input("Novo Usuário", key="novo_usuario")
+        nova_senha = st.text_input("Nova Senha", type="password", key="nova_senha")
+        if st.button("Cadastrar", key="btn_cadastrar"):
+            if novo_usuario.strip() == "" or nova_senha.strip() == "":
+                st.warning("Preencha todos os campos para cadastrar.")
+            else:
+                try:
+                    cursor_usuarios.execute("INSERT INTO usuarios (usuario, senha) VALUES (?, ?)", (novo_usuario, nova_senha))
+                    conn_usuarios.commit()
+                    st.success(f"Usuário '{novo_usuario}' cadastrado com sucesso!")
+                except sqlite3.IntegrityError:
+                    st.error("Usuário já existe.")
+    elif nova_senha_admin != "":
+        st.warning("Senha de administrador incorreta.")
 
-    # Exportar Excel com 3 abas
-    if not df.empty:
-        if st.button("📥 Exportar Excel"):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                # TRATAR QUANTIDADE
-                df["quantidade"] = df["quantidade"].astype(str).str.replace(',', '.')
-                df["quantidade"] = pd.to_numeric(df["quantidade"], errors="coerce").fillna(0)
+# ========== PÁGINA PRINCIPAL ==========
+def app():
+    st.title("📦 Registro de Validade")
 
-                # Aba 1: Detalhado
-                df.to_excel(writer, sheet_name='Detalhado', index=False)
+    st.info(f"🔖 Lote atual: **{st.session_state.lote_atual}**")
 
-                # Aba 2: Total por Motivo
-                df.groupby("motivo")["quantidade"].sum().reset_index(name="Total").to_excel(writer, sheet_name='Total por Motivo', index=False)
+    if not st.session_state.lote_fechado:
+        if st.button("📦 Fechar lote atual"):
+            # Fecha o lote atual e cria um novo automaticamente
+            cursor_produtos.execute("SELECT DISTINCT lote FROM registros_validade WHERE lote LIKE 'TPC_%'")
+            lotes_existentes = cursor_produtos.fetchall()
+            numeros = [int(l[0].split('_')[1]) for l in lotes_existentes if l[0].split('_')[1].isdigit()]
+            proximo_numero = max(numeros, default=0) + 1
+            st.session_state.lote_atual = f"TPC_{proximo_numero:02d}"
+            st.success("Novo lote iniciado.")
+    else:
+        st.warning("Este lote está fechado. Inicie um novo lote para registrar.")
 
-                # Aba 3: Total por Produto
-                df.groupby(["codigo", "descricao"])["quantidade"].sum().reset_index(name="Total").to_excel(writer, sheet_name='Total por Produto', index=False)
+    # Upload opcional (para trocar a base de produtos)
+    st.caption("Selecione a base de produtos (.xlsx)")
+    arquivo = st.file_uploader("Drag and drop file here", type=["xlsx"], key="upload_base")
 
-            st.download_button(
-                "Clique para baixar",
-                data=output.getvalue(),
-                file_name="lancamentos_padaria.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+    cursor_produtos.execute("CREATE TABLE IF NOT EXISTS produtos (codigo TEXT PRIMARY KEY, descricao TEXT)")
+    conn_produtos.commit()
 
-elif aba == "Transformações Carne":
-    st.subheader("Transformações de Carne Bovina")
-    data = st.date_input("Data", value=datetime.today(), key="carne")
-    codigo_origem = st.text_input("Código do produto de origem")
-    descricao = buscar_descricao(codigo_origem)
-    st.text_input("Descrição", value=descricao, disabled=True, key="desc2")
-    quantidade = st.text_input("Quantidade (kg)", key="qtd2")
-    codigo_destino = st.text_input("Código do produto de destino")
+    if arquivo:
+        df_base = pd.read_excel(arquivo, dtype=str)
+        df_base.columns = df_base.columns.str.lower()
+        if 'codigo' in df_base.columns and 'descricao' in df_base.columns:
+            for index, row in df_base.iterrows():
+                cursor_produtos.execute("INSERT OR IGNORE INTO produtos (codigo, descricao) VALUES (?, ?)", (str(row['codigo']), row['descricao']))
+            conn_produtos.commit()
+            st.success("Base carregada com sucesso.")
 
-    if st.button("Salvar Transformação"):
-        if codigo_origem and quantidade and codigo_destino:
-            cadastrar_produto(codigo_origem, descricao)
-            salvar_transformacao_carne(str(data), codigo_origem, descricao, quantidade, codigo_destino)
-            st.success("Transformação salva com sucesso.")
-        else:
-            st.warning("Preencha todos os campos obrigatórios.")
+    with st.form("form_validade"):
+        codigo = st.text_input("Código do Produto", key="codigo_produto")
+        buscar = st.form_submit_button("🔍 Buscar na base de produtos")
 
-    st.markdown("---")
-    st.subheader("Registros Salvos")
-    df = obter_transformacoes_carne()
-    st.dataframe(df)
+        descricao = ""
+        if buscar and codigo.strip() != "":
+            cursor_produtos.execute("SELECT descricao FROM produtos WHERE codigo=?", (codigo.strip(),))
+            resultado = cursor_produtos.fetchone()
+            if resultado:
+                descricao = resultado[0]
+                st.success("Produto encontrado.")
+            else:
+                st.warning("Produto não encontrado. Preencha a descrição manualmente.")
 
-    # Exportar Excel com 2 abas
-    if not df.empty:
-        if st.button("📥 Exportar Excel"):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, sheet_name='Detalhado', index=False)
-                df.groupby("codigo_destino")["quantidade"].count().reset_index(name="Total").to_excel(writer, sheet_name='Total por Código Destino', index=False)
-            st.download_button("Clique para baixar", data=output.getvalue(), file_name="transformacoes_carne.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        descricao = st.text_input("Descrição", value=descricao, key="descricao_produto")
+        validade = st.date_input("Data de Validade", value=date.today(), key="validade")
+        preco_atual = st.text_input("Preço Atual", key="preco_atual")
+        preco_queima = st.text_input("Preço Queima de Estoque", key="preco_queima")
+        custo_atual = st.text_input("Custo Atual", key="custo_atual")
+        custo_anterior = st.text_input("Custo Anterior", key="custo_anterior")
+        quantidade = st.text_input("Quantidade (UN ou KG)", key="quantidade")
+
+        salvar = st.form_submit_button("Salvar Registro")
+        if salvar:
+            if codigo.strip() == "":
+                st.error("O código do produto é obrigatório.")
+            elif st.session_state.lote_fechado:
+                st.warning("Este lote já foi fechado. Inicie um novo lote.")
+            else:
+                cursor_produtos.execute("""
+                    INSERT INTO registros_validade
+                    (codigo, descricao, validade, preco_atual, preco_queima, custo_atual, custo_anterior, quantidade, data_registro, lote)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    codigo.strip(),
+                    descricao.strip(),
+                    validade.strftime("%Y-%m-%d"),
+                    preco_atual.strip(),
+                    preco_queima.strip(),
+                    custo_atual.strip(),
+                    custo_anterior.strip(),
+                    quantidade.strip(),
+                    date.today().strftime("%Y-%m-%d"),
+                    st.session_state.lote_atual
+                ))
+                conn_produtos.commit()
+                st.success("Produto registrado com sucesso!")
+
+    # Exportar por lote
+    st.subheader("📤 Exportar registros por lote")
+    cursor_produtos.execute("SELECT DISTINCT lote FROM registros_validade ORDER BY id DESC")
+    lotes = [l[0] for l in cursor_produtos.fetchall()]
+    if lotes:
+        lote_selecionado = st.selectbox("Selecione o lote", lotes)
+        if st.button("Exportar Excel"):
+            df_export = pd.read_sql_query("SELECT * FROM registros_validade WHERE lote = ?", conn_produtos, params=(lote_selecionado,))
+            df_export.to_excel(f"registros_{lote_selecionado}.xlsx", index=False)
+            st.success(f"Arquivo 'registros_{lote_selecionado}.xlsx' exportado com sucesso!")
+
+    # Gerenciar usuários (apenas para admin)
+    if st.session_state.usuario == "admin":
+        with st.expander("👤 Gerenciar Usuários"):
+            cadastrar_usuario()
+
+    # Botão sair
+    if st.button("Sair"):
+        st.session_state.logado = False
+        st.session_state.usuario = ""
+        st.experimental_rerun()
+
+# ========== EXECUÇÃO ==========
+if not st.session_state.logado:
+    login()
+else:
+    app()

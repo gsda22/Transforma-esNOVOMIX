@@ -6,17 +6,18 @@ import io
 
 st.set_page_config(page_title="FAST", layout="wide")
 
-# Conexão com banco
+# Banco SQLite
 conn = sqlite3.connect("fast.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Criar tabelas se não existirem
+# Criar tabelas
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS produtos (
     codigo TEXT PRIMARY KEY,
     descricao TEXT
 )
 """)
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS padaria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS padaria (
     lote TEXT
 )
 """)
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS carnes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,50 +44,44 @@ CREATE TABLE IF NOT EXISTS carnes (
     lote TEXT
 )
 """)
+
 conn.commit()
 
-# Carrega base produtos uma vez
-def carregar_base():
+# Carregar produtos para sessão
+def carregar_produtos():
     if 'produtos' not in st.session_state:
         df = pd.read_sql("SELECT * FROM produtos", conn)
         st.session_state.produtos = df
 
-carregar_base()
+carregar_produtos()
 
-# Função para buscar descrição
-def buscar_descricao(codigo):
+def buscar_descricao(codigo: str) -> str:
     if not codigo:
         return ""
     df = st.session_state.produtos
-    resultado = df[df['codigo'] == codigo]
-    if not resultado.empty:
-        return resultado.iloc[0]['descricao']
-    return ""
+    prod = df.loc[df['codigo'] == codigo]
+    return prod['descricao'].values[0] if not prod.empty else ""
 
-# Função para validar código produto
-def validar_codigo(codigo):
-    if not codigo or codigo.strip() == "":
-        st.error("⚠️ Código não pode ficar vazio.")
+def validar_codigo(codigo: str) -> bool:
+    if not codigo.strip():
+        st.error("⚠️ Código não pode estar vazio.")
         return False
     return True
 
-# Função para validar quantidade
-def validar_quantidade(qtd):
+def validar_quantidade(qtd: float) -> bool:
     if qtd <= 0:
         st.error("⚠️ Quantidade deve ser maior que zero.")
         return False
     return True
 
-# Layout
 st.title("🧾 FAST")
 
-abas = st.tabs(["📋 Lançamentos Padaria", "🥩 Transformações Carne"])
+tabs = st.tabs(["📋 Lançamentos Padaria", "🥩 Transformações Carne"])
 
-with abas[0]:
-    st.subheader("📋 Registro de Lançamentos da Padaria")
-
+with tabs[0]:
+    st.subheader("Registro de Lançamentos da Padaria")
     with st.form("form_padaria", clear_on_submit=True):
-        col1, col2, col3 = st.columns([1.5, 3, 1])
+        col1, col2, col3 = st.columns([1.5,3,1])
         with col1:
             codigo = st.text_input("Código").strip()
         with col2:
@@ -102,28 +98,25 @@ with abas[0]:
         with col6:
             lote = st.text_input("Lote")
 
-        submitted = st.form_submit_button("Salvar")
-        if submitted:
-            if not validar_codigo(codigo) or not validar_quantidade(quantidade):
-                st.warning("Corrija os erros acima para salvar.")
-            else:
+        if st.form_submit_button("Salvar"):
+            if validar_codigo(codigo) and validar_quantidade(quantidade):
                 try:
                     cursor.execute("""
-                        INSERT INTO padaria (data, codigo, descricao, quantidade, unidade, motivo, lote)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO padaria (data, codigo, descricao, quantidade, unidade, motivo, lote)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (str(date.today()), codigo, descricao, quantidade, unidade, motivo, lote))
                     conn.commit()
-                    st.success("Registro salvo!")
-                    # Atualizar a base produtos caso queira — opcional
-                    carregar_base()
+                    st.success("Registro salvo com sucesso!")
+                    carregar_produtos()
                 except Exception as e:
-                    st.error(f"Erro ao salvar no banco: {e}")
+                    st.error(f"Erro ao salvar: {e}")
+            else:
+                st.warning("Por favor corrija os erros acima antes de salvar.")
 
-    st.markdown("### 📅 Registros de Hoje:")
+    st.markdown("### 📅 Registros de Hoje")
     df_padaria = pd.read_sql(f"SELECT * FROM padaria WHERE data = '{date.today()}'", conn)
     st.dataframe(df_padaria, use_container_width=True)
 
-    # Exportações Padaria (sem xlsxwriter)
     def exportar_padaria_detalhado():
         df = pd.read_sql("SELECT * FROM padaria", conn)
         output = io.BytesIO()
@@ -139,30 +132,29 @@ with abas[0]:
         output.seek(0)
         return output
 
-    col1, col2, col3 = st.columns([1,1,1])
-    with col1:
-        st.download_button("📥 Baixar Excel Detalhado", data=exportar_padaria_detalhado(),
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button("📥 Baixar Excel Detalhado", exportar_padaria_detalhado(),
                            file_name="padaria_detalhado.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    with col2:
-        st.download_button("📥 Baixar Excel Total por Produto", data=exportar_padaria_total(),
+    with c2:
+        st.download_button("📥 Baixar Excel Total por Produto", exportar_padaria_total(),
                            file_name="padaria_total.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-with abas[1]:
-    st.subheader("🥩 Registro de Transformações de Carne")
-
+with tabs[1]:
+    st.subheader("Registro de Transformações de Carne")
     with st.form("form_carnes", clear_on_submit=True):
-        col1, col2, col3 = st.columns([1.5, 3, 1])
+        col1, col2, col3 = st.columns([1.5,3,1])
         with col1:
-            codigo = st.text_input("Código origem").strip()
+            codigo_origem = st.text_input("Código origem").strip()
         with col2:
-            descricao = buscar_descricao(codigo)
-            st.text_input("Descrição origem", value=descricao, disabled=True)
+            descricao_origem = buscar_descricao(codigo_origem)
+            st.text_input("Descrição origem", value=descricao_origem, disabled=True)
         with col3:
             quantidade = st.number_input("Quantidade", min_value=0.01, step=0.01, key="qtd_carnes")
 
-        col4, col5, col6 = st.columns([1.5, 3, 1])
+        col4, col5, col6 = st.columns([1.5,3,1])
         with col4:
             codigo_destino = st.text_input("Código destino").strip()
         with col5:
@@ -173,27 +165,26 @@ with abas[1]:
 
         lote = st.text_input("Lote", key="lote_carnes")
 
-        submitted = st.form_submit_button("Salvar")
-        if submitted:
-            if not validar_codigo(codigo) or not validar_codigo(codigo_destino) or not validar_quantidade(quantidade):
-                st.warning("Corrija os erros acima para salvar.")
-            else:
+        if st.form_submit_button("Salvar"):
+            if (validar_codigo(codigo_origem) and validar_codigo(codigo_destino) and
+                validar_quantidade(quantidade)):
                 try:
                     cursor.execute("""
-                        INSERT INTO carnes (data, codigo, descricao, codigo_destino, descricao_destino, quantidade, unidade, lote)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (str(date.today()), codigo, descricao, codigo_destino, descricao_destino, quantidade, unidade, lote))
+                    INSERT INTO carnes (data, codigo, descricao, codigo_destino, descricao_destino, quantidade, unidade, lote)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (str(date.today()), codigo_origem, descricao_origem, codigo_destino, descricao_destino, quantidade, unidade, lote))
                     conn.commit()
-                    st.success("Transformação registrada!")
-                    carregar_base()
+                    st.success("Transformação registrada com sucesso!")
+                    carregar_produtos()
                 except Exception as e:
-                    st.error(f"Erro ao salvar no banco: {e}")
+                    st.error(f"Erro ao salvar: {e}")
+            else:
+                st.warning("Por favor corrija os erros acima antes de salvar.")
 
-    st.markdown("### 📅 Transformações de Hoje:")
+    st.markdown("### 📅 Transformações de Hoje")
     df_carnes = pd.read_sql(f"SELECT * FROM carnes WHERE data = '{date.today()}'", conn)
     st.dataframe(df_carnes, use_container_width=True)
 
-    # Exportações Carnes (sem xlsxwriter)
     def exportar_carnes_detalhado():
         df = pd.read_sql("SELECT * FROM carnes", conn)
         output = io.BytesIO()
@@ -209,12 +200,12 @@ with abas[1]:
         output.seek(0)
         return output
 
-    col1, col2, col3 = st.columns([1,1,1])
-    with col1:
-        st.download_button("📥 Baixar Excel Detalhado", data=exportar_carnes_detalhado(),
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button("📥 Baixar Excel Detalhado", exportar_carnes_detalhado(),
                            file_name="carnes_detalhado.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    with col2:
-        st.download_button("📥 Baixar Excel Total por Produto", data=exportar_carnes_total(),
+    with c2:
+        st.download_button("📥 Baixar Excel Total por Produto", exportar_carnes_total(),
                            file_name="carnes_total.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

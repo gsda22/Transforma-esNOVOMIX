@@ -99,24 +99,30 @@ with abas[0]:
     df_padaria = pd.read_sql(f"SELECT * FROM padaria WHERE data = '{date.today()}'", conn)
     st.dataframe(df_padaria, use_container_width=True)
 
-    # Exportações
-    def exportar_padaria():
+    # Exportações Padaria (SEM xlsxwriter, layout ajustado)
+    def exportar_padaria_detalhado():
         df = pd.read_sql("SELECT * FROM padaria", conn)
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, sheet_name="Lançamentos", index=False)
-            resumo = df.groupby("descricao")["quantidade"].sum().reset_index()
-            resumo.to_excel(writer, sheet_name="Total por Produto", index=False)
+        df.to_excel(output, index=False)
         output.seek(0)
         return output
 
-    col1, col2 = st.columns(2)
+    def exportar_padaria_total():
+        df = pd.read_sql("SELECT * FROM padaria", conn)
+        resumo = df.groupby("descricao")["quantidade"].sum().reset_index()
+        output = io.BytesIO()
+        resumo.to_excel(output, index=False)
+        output.seek(0)
+        return output
+
+    col1, col2, col3 = st.columns([1,1,1])
     with col1:
-        st.download_button("📥 Baixar Excel (detalhado)", data=exportar_padaria(),
-                           file_name="padaria_detalhado.xlsx", mime="application/vnd.ms-excel")
+        st.download_button("📥 Baixar Excel Detalhado", data=exportar_padaria_detalhado(),
+                           file_name="padaria_detalhado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with col2:
-        st.download_button("📥 Baixar Excel (total por produto)",
-                           data=exportar_padaria(), file_name="padaria_total.xlsx", mime="application/vnd.ms-excel")
+        st.download_button("📥 Baixar Excel Total por Produto", data=exportar_padaria_total(),
+                           file_name="padaria_total.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 
 with abas[1]:
     st.subheader("🥩 Registro de Transformações de Carne")
@@ -155,21 +161,26 @@ with abas[1]:
     df_carnes = pd.read_sql(f"SELECT * FROM carnes WHERE data = '{date.today()}'", conn)
     st.dataframe(df_carnes, use_container_width=True)
 
-    # Exportações
-    def exportar_carnes():
+    # Exportações Carnes (SEM xlsxwriter, layout ajustado)
+    def exportar_carnes_detalhado():
         df = pd.read_sql("SELECT * FROM carnes", conn)
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, sheet_name="Transformações", index=False)
-            resumo = df.groupby("descricao_destino")["quantidade"].sum().reset_index()
-            resumo.to_excel(writer, sheet_name="Total por Produto", index=False)
+        df.to_excel(output, index=False)
         output.seek(0)
         return output
 
-    col1, col2 = st.columns(2)
+    def exportar_carnes_total():
+        df = pd.read_sql("SELECT * FROM carnes", conn)
+        resumo = df.groupby("descricao_destino")["quantidade"].sum().reset_index()
+        output = io.BytesIO()
+        resumo.to_excel(output, index=False)
+        output.seek(0)
+        return output
+
+    col1, col2, col3 = st.columns([1,1,1])
     with col1:
-        st.download_button("📥 Baixar Excel (detalhado)", data=exportar_carnes(),
-                           file_name="carnes_detalhado.xlsx", mime="application/vnd.ms-excel")
+        st.download_button("📥 Baixar Excel Detalhado", data=exportar_carnes_detalhado(),
+                           file_name="carnes_detalhado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with col2:
-        st.download_button("📥 Baixar Excel (total por produto)",
-                           data=exportar_carnes(), file_name="carnes_total.xlsx", mime="application/vnd.ms-excel")
+        st.download_button("📥 Baixar Excel Total por Produto", data=exportar_carnes_total(),
+                           file_name="carnes_total.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

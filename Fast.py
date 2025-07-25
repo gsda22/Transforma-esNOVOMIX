@@ -2,7 +2,6 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import date
-from io import BytesIO  # se você não usar BytesIO em outro ponto, pode remover esta linha
 
 st.set_page_config(page_title="FAST", layout="wide")
 
@@ -106,37 +105,19 @@ if aba == "Lançamentos da padaria":
             st.success("Registro excluído com sucesso!")
             st.experimental_rerun()
 
-    # ======= EXPORTAÇÃO ATUALIZADA: 3 abas no Excel =======
+    # ======= EXPORTAÇÃO COM TOTAL POR PRODUTO =======
     if not df_padaria.empty:
-        # 1) Total por motivo (soma da quantidade por motivo)
-        total_por_motivo = (
-            df_padaria.groupby("motivo", as_index=False)["quantidade"]
-            .sum()
-            .rename(columns={"quantidade": "total_quantidade"})
-        )
+        df_total = df_padaria.groupby(['codigo', 'descricao'])['quantidade'].sum().reset_index()
+        df_total = df_total.rename(columns={'quantidade': 'total_quantidade'})
 
-        # 2) Total por produto (código + descrição), independente do motivo
-        total_por_produto = (
-            df_padaria.groupby(["codigo", "descricao"], as_index=False)["quantidade"]
-            .sum()
-            .rename(columns={"quantidade": "total_quantidade"})
-        )
-
-        # Gera o arquivo Excel em disco (mantendo seu padrão)
         with pd.ExcelWriter("lancamentos_padaria.xlsx", engine="xlsxwriter") as writer:
             df_padaria.to_excel(writer, index=False, sheet_name="Detalhado")
-            total_por_motivo.to_excel(writer, index=False, sheet_name="Total por Motivo")
-            total_por_produto.to_excel(writer, index=False, sheet_name="Total por Produto")
+            df_total.to_excel(writer, index=False, sheet_name="Total por Produto")
 
         with open("lancamentos_padaria.xlsx", "rb") as f:
-            st.download_button(
-                "📥 Baixar Excel (Detalhado + Totais)",
-                f,
-                file_name="lancamentos_padaria.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            st.download_button("📥 Baixar Excel (com Totais)", f, file_name="lancamentos_padaria.xlsx")
 
 # ========== ABA TRANSFORMAÇÕES ==========
 elif aba == "Transformações de carne bovina":
     st.header("🥩 Transformações de Carne Bovina")
-    st.info("(Sem alterações aqui — você só pediu mudança na exportação da padaria.)")
+    # Essa parte segue o mesmo modelo da padaria, se quiser posso implementar também a parte do total por código destino aqui

@@ -54,11 +54,27 @@ carregar_base()
 
 # Função para buscar descrição
 def buscar_descricao(codigo):
+    if not codigo:
+        return ""
     df = st.session_state.produtos
     resultado = df[df['codigo'] == codigo]
     if not resultado.empty:
         return resultado.iloc[0]['descricao']
     return ""
+
+# Função para validar código produto
+def validar_codigo(codigo):
+    if not codigo or codigo.strip() == "":
+        st.error("⚠️ Código não pode ficar vazio.")
+        return False
+    return True
+
+# Função para validar quantidade
+def validar_quantidade(qtd):
+    if qtd <= 0:
+        st.error("⚠️ Quantidade deve ser maior que zero.")
+        return False
+    return True
 
 # Layout
 st.title("🧾 FAST")
@@ -88,18 +104,26 @@ with abas[0]:
 
         submitted = st.form_submit_button("Salvar")
         if submitted:
-            cursor.execute("""
-                INSERT INTO padaria (data, codigo, descricao, quantidade, unidade, motivo, lote)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (str(date.today()), codigo, descricao, quantidade, unidade, motivo, lote))
-            conn.commit()
-            st.success("Registro salvo!")
+            if not validar_codigo(codigo) or not validar_quantidade(quantidade):
+                st.warning("Corrija os erros acima para salvar.")
+            else:
+                try:
+                    cursor.execute("""
+                        INSERT INTO padaria (data, codigo, descricao, quantidade, unidade, motivo, lote)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (str(date.today()), codigo, descricao, quantidade, unidade, motivo, lote))
+                    conn.commit()
+                    st.success("Registro salvo!")
+                    # Atualizar a base produtos caso queira — opcional
+                    carregar_base()
+                except Exception as e:
+                    st.error(f"Erro ao salvar no banco: {e}")
 
     st.markdown("### 📅 Registros de Hoje:")
     df_padaria = pd.read_sql(f"SELECT * FROM padaria WHERE data = '{date.today()}'", conn)
     st.dataframe(df_padaria, use_container_width=True)
 
-    # Exportações Padaria (SEM xlsxwriter, layout ajustado)
+    # Exportações Padaria (sem xlsxwriter)
     def exportar_padaria_detalhado():
         df = pd.read_sql("SELECT * FROM padaria", conn)
         output = io.BytesIO()
@@ -118,11 +142,12 @@ with abas[0]:
     col1, col2, col3 = st.columns([1,1,1])
     with col1:
         st.download_button("📥 Baixar Excel Detalhado", data=exportar_padaria_detalhado(),
-                           file_name="padaria_detalhado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                           file_name="padaria_detalhado.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with col2:
         st.download_button("📥 Baixar Excel Total por Produto", data=exportar_padaria_total(),
-                           file_name="padaria_total.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
+                           file_name="padaria_total.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with abas[1]:
     st.subheader("🥩 Registro de Transformações de Carne")
@@ -150,18 +175,25 @@ with abas[1]:
 
         submitted = st.form_submit_button("Salvar")
         if submitted:
-            cursor.execute("""
-                INSERT INTO carnes (data, codigo, descricao, codigo_destino, descricao_destino, quantidade, unidade, lote)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (str(date.today()), codigo, descricao, codigo_destino, descricao_destino, quantidade, unidade, lote))
-            conn.commit()
-            st.success("Transformação registrada!")
+            if not validar_codigo(codigo) or not validar_codigo(codigo_destino) or not validar_quantidade(quantidade):
+                st.warning("Corrija os erros acima para salvar.")
+            else:
+                try:
+                    cursor.execute("""
+                        INSERT INTO carnes (data, codigo, descricao, codigo_destino, descricao_destino, quantidade, unidade, lote)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (str(date.today()), codigo, descricao, codigo_destino, descricao_destino, quantidade, unidade, lote))
+                    conn.commit()
+                    st.success("Transformação registrada!")
+                    carregar_base()
+                except Exception as e:
+                    st.error(f"Erro ao salvar no banco: {e}")
 
     st.markdown("### 📅 Transformações de Hoje:")
     df_carnes = pd.read_sql(f"SELECT * FROM carnes WHERE data = '{date.today()}'", conn)
     st.dataframe(df_carnes, use_container_width=True)
 
-    # Exportações Carnes (SEM xlsxwriter, layout ajustado)
+    # Exportações Carnes (sem xlsxwriter)
     def exportar_carnes_detalhado():
         df = pd.read_sql("SELECT * FROM carnes", conn)
         output = io.BytesIO()
@@ -180,7 +212,9 @@ with abas[1]:
     col1, col2, col3 = st.columns([1,1,1])
     with col1:
         st.download_button("📥 Baixar Excel Detalhado", data=exportar_carnes_detalhado(),
-                           file_name="carnes_detalhado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                           file_name="carnes_detalhado.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with col2:
         st.download_button("📥 Baixar Excel Total por Produto", data=exportar_carnes_total(),
-                           file_name="carnes_total.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                           file_name="carnes_total.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
